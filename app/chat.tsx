@@ -9,7 +9,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
-import { AI_PROVIDERS, AIProvider, getProviderById, getSelectedModel } from '@/constants/AIProviders';
+import { AI_PROVIDERS, AIProvider, getProviderById, getSelectedModel, setSelectedModel } from '@/constants/AIProviders';
 import { AIService, ChatMessage } from '@/services/AIService';
 import { 
   ConversationService, 
@@ -805,6 +805,132 @@ export default function ChatScreen() {
               </TouchableOpacity>
             </View>
 
+            {/* Current AI Provider Section */}
+            <View style={styles.sidebarSection}>
+              <ThemedText style={styles.sectionTitle}>Current AI Provider</ThemedText>
+              
+              <View style={[styles.currentProviderCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={styles.currentProviderInfo}>
+                  <View style={styles.currentProviderHeader}>
+                    <Ionicons 
+                      name={getProviderById(selectedProvider)?.icon as any || 'chatbubble-ellipses'} 
+                      size={20} 
+                      color={colors.primary} 
+                    />
+                    <ThemedText style={styles.currentProviderName}>
+                      {getProviderById(selectedProvider)?.name}
+                    </ThemedText>
+                  </View>
+                  <ThemedText style={styles.currentModelName}>
+                    Model: {currentModel}
+                  </ThemedText>
+                </View>
+              </View>
+
+              {/* Quick Provider Switcher */}
+              <View style={styles.quickProviderSwitcher}>
+                {AI_PROVIDERS.filter(provider => apiKeys[provider.id]).map((provider) => (
+                  <TouchableOpacity
+                    key={provider.id}
+                    style={[
+                      styles.quickProviderButton,
+                      { backgroundColor: colors.card, borderColor: colors.border },
+                      selectedProvider === provider.id && { 
+                        backgroundColor: colors.primary + '20', 
+                        borderColor: colors.primary 
+                      }
+                    ]}
+                    onPress={async () => {
+                      setSelectedProvider(provider.id);
+                      const model = await getSelectedModel(provider.id);
+                      setCurrentModel(model);
+                      await AsyncStorage.setItem('selected_provider', provider.id);
+                      
+                      // Update current conversation's provider and model
+                      if (currentConversation) {
+                        const updatedConversation = {
+                          ...currentConversation,
+                          providerId: provider.id,
+                          modelName: model,
+                          updatedAt: new Date(),
+                        };
+                        setCurrentConversation(updatedConversation);
+                        await ConversationService.saveConversation(updatedConversation);
+                      }
+                    }}
+                  >
+                    <Ionicons 
+                      name={provider.icon as any} 
+                      size={16} 
+                      color={selectedProvider === provider.id ? colors.primary : colors.text} 
+                    />
+                    <ThemedText style={[
+                      styles.quickProviderText,
+                      selectedProvider === provider.id && { color: colors.primary }
+                    ]}>
+                      {provider.name}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Model Selection for Current Provider */}
+              {(() => {
+                const currentProvider = getProviderById(selectedProvider);
+                if (!currentProvider || !apiKeys[selectedProvider]) return null;
+
+                return (
+                  <View style={styles.modelSelection}>
+                    <ThemedText style={styles.modelSelectionTitle}>Available Models</ThemedText>
+                    <ScrollView 
+                      horizontal 
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.modelScrollView}
+                    >
+                      {currentProvider.availableModels.map((model) => (
+                        <TouchableOpacity
+                          key={model.id}
+                          style={[
+                            styles.modelChip,
+                            { backgroundColor: colors.card, borderColor: colors.border },
+                            currentModel === model.name && { 
+                              backgroundColor: colors.primary + '20', 
+                              borderColor: colors.primary 
+                            }
+                          ]}
+                          onPress={async () => {
+                            setCurrentModel(model.name);
+                            await setSelectedModel(selectedProvider, model.name);
+                            
+                            // Update current conversation's model
+                            if (currentConversation) {
+                              const updatedConversation = {
+                                ...currentConversation,
+                                modelName: model.name,
+                                updatedAt: new Date(),
+                              };
+                              setCurrentConversation(updatedConversation);
+                              await ConversationService.saveConversation(updatedConversation);
+                            }
+                          }}
+                        >
+                          <ThemedText style={[
+                            styles.modelChipText,
+                            currentModel === model.name && { color: colors.primary }
+                          ]}>
+                            {model.displayName}
+                          </ThemedText>
+                          {currentModel === model.name && (
+                            <Ionicons name="checkmark-circle" size={14} color={colors.primary} />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                );
+              })()}
+            </View>
+
             {/* Settings Section */}
             <View style={styles.sidebarSection}>
               <ThemedText style={styles.sectionTitle}>Settings</ThemedText>
@@ -1389,5 +1515,74 @@ const styles = StyleSheet.create({
   },
   contextPopupBody: {
     flex: 1,
+  },
+  currentProviderCard: {
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 12,
+  },
+  currentProviderInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  currentProviderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  currentProviderName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  currentModelName: {
+    fontSize: 12,
+    opacity: 0.7,
+  },
+  quickProviderSwitcher: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  quickProviderButton: {
+    padding: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  quickProviderText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modelSelection: {
+    marginTop: 12,
+  },
+  modelSelectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  modelScrollView: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  modelChip: {
+    padding: 8,
+    borderWidth: 1,
+    borderColor: 'transparent',
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginRight: 8,
+  },
+  modelChipText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 }); 
