@@ -24,6 +24,7 @@ export default function RootLayout() {
         <Stack.Screen name="chat" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen name="subscription" options={{ headerShown: false }} />
+        <Stack.Screen name="ai-providers" options={{ headerShown: false }} />
         <Stack.Screen name="api-key" options={{ headerShown: false }} />
         <Stack.Screen name="+not-found" />
       </Stack>

@@ -19,7 +19,7 @@ export default function SetupScreen() {
   };
 
   const handleApiKey = () => {
-    router.push('/api-key');
+    router.push('/ai-providers');
   };
 
   const BackgroundWrapper = ({ children }: { children: React.ReactNode }) => {
@@ -87,10 +87,10 @@ export default function SetupScreen() {
             ]}>
               <Ionicons name="key" size={24} color={colors.secondary} />
               <ThemedText style={[styles.outlineButtonText, { color: colors.secondary }]}>
-                Use Your OpenAI API Key
+                Use Your AI Provider API Keys
               </ThemedText>
               <ThemedText style={[styles.outlineButtonSubtext, { color: colors.secondary }]}>
-                Bring your own API key • Pay as you use
+                ChatGPT • Claude • Gemini • Groq • Pay as you use
               </ThemedText>
             </View>
           </TouchableOpacity>

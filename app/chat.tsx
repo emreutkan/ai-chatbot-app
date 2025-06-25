@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, View, ScrollView, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -9,6 +9,8 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
+import { AI_PROVIDERS, AIProvider, getProviderById, getSelectedModel } from '@/constants/AIProviders';
+import { AIService, ChatMessage } from '@/services/AIService';
 
 type Message = {
   id: string;
@@ -17,55 +19,76 @@ type Message = {
   timestamp: Date;
 };
 
-// Mock function for premium subscription API calls
-// In a real app, this would call your backend API with your OpenAI keys
-const mockPremiumAPICall = async (conversationHistory: any[]) => {
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  // Mock response structure similar to OpenAI API
-  return {
-    ok: true,
-    json: async () => ({
-      choices: [{
-        message: {
-          content: "I'm responding through the premium subscription service! This would normally use your backend API with your OpenAI keys to provide unlimited access to users with subscriptions."
-        }
-      }]
-    })
-  };
-};
+// Note: For subscription users, you would implement a backend API that:
+// 1. Receives user messages from the mobile app
+// 2. Makes OpenAI API calls using your server's API keys
+// 3. Returns the AI responses to the mobile app
+// This keeps your API keys secure on the server side
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [hasSubscription, setHasSubscription] = useState<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<string>('openai');
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  const [currentModel, setCurrentModel] = useState<string>('');
+  const scrollViewRef = useRef<ScrollView>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
   useEffect(() => {
     loadUserSettings();
-    // Add a welcome message
-    setMessages([
-      {
-        id: '1',
-        text: "Hello! I'm your AI assistant. How can I help you today?",
-        isUser: false,
-        timestamp: new Date(),
-      },
-    ]);
   }, []);
+
+  // Add welcome message after settings are loaded
+  useEffect(() => {
+    const currentProvider = getProviderById(selectedProvider);
+    const hasCurrentApiKey = apiKeys[selectedProvider];
+    
+    if (hasCurrentApiKey && currentProvider) {
+      setMessages([
+        {
+          id: '1',
+          text: `Hello! I'm ${currentProvider.name}, your AI assistant. I'm ready to help you with questions, creative writing, problem-solving, and much more. What would you like to talk about?`,
+          isUser: false,
+          timestamp: new Date(),
+        },
+      ]);
+    } else {
+      setMessages([
+        {
+          id: '1',
+          text: "Welcome to ChatMobile! To get started, please add API keys for your preferred AI providers by tapping the gear icon in the top right and selecting 'AI Providers'.",
+          isUser: false,
+          timestamp: new Date(),
+        },
+      ]);
+    }
+  }, [selectedProvider, apiKeys]);
 
   const loadUserSettings = async () => {
     try {
-      const [key, subscription] = await Promise.all([
-        AsyncStorage.getItem('openai_api_key'),
-        AsyncStorage.getItem('has_subscription')
-      ]);
-      setApiKey(key);
-      setHasSubscription(subscription);
+      // Load all API keys
+      const keys: Record<string, string> = {};
+      for (const provider of AI_PROVIDERS) {
+        const key = await AsyncStorage.getItem(`${provider.id}_api_key`);
+        console.log(`Loading ${provider.id} API key:`, key ? 'Found' : 'Not found');
+        if (key) {
+          keys[provider.id] = key;
+        }
+      }
+      setApiKeys(keys);
+      console.log('Final loaded API keys:', Object.keys(keys));
+
+      // Load selected provider preference
+      const savedProvider = await AsyncStorage.getItem('selected_provider');
+      console.log('Saved provider preference:', savedProvider);
+      if (savedProvider && getProviderById(savedProvider)) {
+        setSelectedProvider(savedProvider);
+        // Load current model for this provider
+        const model = await getSelectedModel(savedProvider);
+        setCurrentModel(model);
+      }
     } catch (error) {
       console.error('Error loading user settings:', error);
     }
@@ -74,11 +97,22 @@ export default function ChatScreen() {
   const sendMessage = async () => {
     if (!inputText.trim()) return;
     
-    // Check if user has either API key or subscription
-    if (!apiKey && !hasSubscription) {
+    const currentProvider = getProviderById(selectedProvider);
+    const currentApiKey = apiKeys[selectedProvider];
+    
+    console.log('Debug sendMessage:', {
+      selectedProvider,
+      currentProvider: currentProvider?.name,
+      hasApiKey: !!currentApiKey,
+      allApiKeys: Object.keys(apiKeys),
+      apiKeyLength: currentApiKey?.length
+    });
+    
+    // Check if user has API key for selected provider
+    if (!currentApiKey || !currentProvider) {
       Alert.alert(
-        'No Access', 
-        'Please either add your OpenAI API key or subscribe to ChatMobile Premium to start chatting.',
+        'No API Key', 
+        `Please add your ${currentProvider?.name || 'AI provider'} API key in Settings to start chatting.`,
         [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Go to Settings', onPress: () => router.push('/settings') }
@@ -97,10 +131,16 @@ export default function ChatScreen() {
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setIsLoading(true);
+    
+    // Auto-scroll when user sends message
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
 
     try {
-      // Build conversation history for context
-      const conversationHistory = messages.map(msg => ({
+      // Build conversation history for context (keep last 10 messages to manage token limits)
+      const recentMessages = messages.slice(-10);
+      const conversationHistory: ChatMessage[] = recentMessages.map(msg => ({
         role: msg.isUser ? 'user' : 'assistant',
         content: msg.text
       }));
@@ -111,61 +151,31 @@ export default function ChatScreen() {
         content: userMessage.text
       });
 
-      let data;
+      // Get the selected model for this provider
+      const selectedModel = await getSelectedModel(selectedProvider);
 
-      if (apiKey) {
-        // Use user's own OpenAI API key
-        const apiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: 'gpt-3.5-turbo',
-            messages: conversationHistory,
-            max_tokens: 500,
-            temperature: 0.7,
-          }),
-        });
+      console.log(`Sending to ${currentProvider.name}:`, {
+        messageCount: conversationHistory.length,
+        lastMessage: userMessage.text,
+        model: selectedModel
+      });
 
-        if (!apiResponse.ok) {
-          const errorData = await apiResponse.json().catch(() => ({}));
-          console.error('OpenAI API Error:', apiResponse.status, errorData);
-          
-          if (apiResponse.status === 401) {
-            throw new Error('Invalid API key. Please check your OpenAI API key.');
-          } else if (apiResponse.status === 429) {
-            throw new Error('Rate limit exceeded. Please try again later.');
-          } else if (apiResponse.status === 403) {
-            throw new Error('API key does not have access to this model. Please check your OpenAI account.');
-          } else {
-            throw new Error(`OpenAI API error: ${apiResponse.status}`);
-          }
-        }
-
-        data = await apiResponse.json();
-      } else if (hasSubscription) {
-        // Use premium subscription service (would be your backend API)
-        // For now, we'll simulate this with a mock response
-        const mockResponse = await mockPremiumAPICall(conversationHistory);
-        data = await mockResponse.json();
-      } else {
-        throw new Error('No API access available');
-      }
-      
-      if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-        throw new Error('Invalid response format from OpenAI');
-      }
+      // Call the appropriate AI service with the selected model
+      const response = await AIService.callAI(currentProvider, currentApiKey, conversationHistory, selectedModel);
 
       const aiResponse: Message = {
         id: Date.now().toString() + '_ai',
-        text: data.choices[0].message.content.trim(),
+        text: response.content,
         isUser: false,
         timestamp: new Date(),
       };
 
       setMessages(prev => [...prev, aiResponse]);
+      
+      // Auto-scroll to bottom after AI response
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } catch (error) {
       console.error('Error sending message:', error);
       const errorMessage: Message = {
@@ -219,15 +229,57 @@ export default function ChatScreen() {
             <ThemedText type="title" style={styles.headerTitle}>
               Chat
             </ThemedText>
-            <TouchableOpacity 
-              style={styles.settingsButton}
-              onPress={() => router.push('/settings')}
-            >
-              <Ionicons name="settings" size={24} color={colors.primary} />
-            </TouchableOpacity>
+            <View style={styles.headerRight}>
+              <TouchableOpacity 
+                style={styles.providerSelector}
+                onPress={() => {
+                  // Show provider selection modal or navigate to provider settings
+                  Alert.alert(
+                    'Select AI Provider',
+                    'Choose your AI provider',
+                    [
+                      ...AI_PROVIDERS.map(provider => ({
+                        text: provider.displayName,
+                        onPress: async () => {
+                          setSelectedProvider(provider.id);
+                          await AsyncStorage.setItem('selected_provider', provider.id);
+                          // Load and update current model for this provider
+                          const model = await getSelectedModel(provider.id);
+                          setCurrentModel(model);
+                        }
+                      })),
+                      { text: 'Cancel', style: 'cancel' as const }
+                    ]
+                  );
+                }}
+              >
+                <Ionicons 
+                  name={getProviderById(selectedProvider)?.icon as any || 'chatbubble-ellipses'} 
+                  size={20} 
+                  color={colors.primary} 
+                />
+                <View style={styles.providerTextContainer}>
+                  <ThemedText style={styles.providerText}>
+                    {getProviderById(selectedProvider)?.name || 'Select AI'}
+                  </ThemedText>
+                  {currentModel && (
+                    <ThemedText style={styles.modelText}>
+                      {currentModel}
+                    </ThemedText>
+                  )}
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.settingsButton}
+                onPress={() => router.push('/settings')}
+              >
+                <Ionicons name="settings" size={24} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <ScrollView 
+            ref={scrollViewRef}
             style={styles.messagesContainer} 
             contentContainerStyle={styles.messagesContent}
             showsVerticalScrollIndicator={false}
@@ -353,5 +405,31 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  providerSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    gap: 6,
+  },
+  providerTextContainer: {
+    marginLeft: 8,
+  },
+  providerText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modelText: {
+    fontSize: 10,
+    opacity: 0.7,
+    fontStyle: 'italic',
   },
 }); 

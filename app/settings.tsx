@@ -9,10 +9,11 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
+import { AI_PROVIDERS } from '@/constants/AIProviders';
 
 export default function SettingsScreen() {
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [hasSubscription, setHasSubscription] = useState(false);
+  const [hasAnyApiKey, setHasAnyApiKey] = useState(false);
+  const [apiKeyCount, setApiKeyCount] = useState(0);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -22,58 +23,24 @@ export default function SettingsScreen() {
 
   const checkSetupStatus = async () => {
     try {
-      const apiKey = await AsyncStorage.getItem('openai_api_key');
-      const subscription = await AsyncStorage.getItem('has_subscription');
-      setHasApiKey(!!apiKey);
-      setHasSubscription(!!subscription);
+      let count = 0;
+      for (const provider of AI_PROVIDERS) {
+        const key = await AsyncStorage.getItem(`${provider.id}_api_key`);
+        if (key) count++;
+      }
+      setApiKeyCount(count);
+      setHasAnyApiKey(count > 0);
     } catch (error) {
       console.error('Error checking setup status:', error);
     }
   };
 
   const handleApiKeyManagement = () => {
-    if (hasApiKey) {
-      Alert.alert(
-        'API Key Management',
-        'What would you like to do with your API key?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Update', onPress: () => router.push('/api-key') },
-          { 
-            text: 'Remove', 
-            style: 'destructive',
-            onPress: () => removeApiKey()
-          },
-        ]
-      );
-    } else {
-      router.push('/api-key');
-    }
-  };
-
-  const removeApiKey = async () => {
-    try {
-      await AsyncStorage.removeItem('openai_api_key');
-      setHasApiKey(false);
-      Alert.alert('Success', 'API key has been removed');
-    } catch {
-      Alert.alert('Error', 'Failed to remove API key');
-    }
+    router.push('/ai-providers');
   };
 
   const handleSubscriptionManagement = () => {
-    if (hasSubscription) {
-      Alert.alert(
-        'Subscription Active',
-        'You have an active subscription. Manage it through the subscription screen.',
-        [
-          { text: 'OK' },
-          { text: 'Manage', onPress: () => router.push('/subscription') },
-        ]
-      );
-    } else {
-      router.push('/subscription');
-    }
+    router.push('/subscription');
   };
 
   const handleBack = () => {
@@ -130,19 +97,19 @@ export default function SettingsScreen() {
             <ThemedText style={styles.sectionTitle}>Account</ThemedText>
             
             <SettingItem
-              icon="key"
-              title="API Key"
-              subtitle={hasApiKey ? "API key configured" : "Set up your OpenAI API key"}
+              icon="hardware-chip"
+              title="AI Providers"
+              subtitle={hasAnyApiKey ? `${apiKeyCount} provider${apiKeyCount !== 1 ? 's' : ''} configured` : "Set up your AI provider API keys"}
               onPress={handleApiKeyManagement}
-              hasValue={hasApiKey}
+              hasValue={hasAnyApiKey}
             />
             
             <SettingItem
               icon="diamond"
               title="Subscription"
-              subtitle={hasSubscription ? "Premium subscription active" : "Get unlimited access"}
+              subtitle="Premium subscription (Coming Soon)"
               onPress={handleSubscriptionManagement}
-              hasValue={hasSubscription}
+              hasValue={false}
             />
           </View>
 

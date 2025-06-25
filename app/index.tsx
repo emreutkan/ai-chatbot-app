@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { AI_PROVIDERS } from '@/constants/AIProviders';
 
 export default function IndexScreen() {
   const [isLoading, setIsLoading] = useState(true);
@@ -17,10 +18,17 @@ export default function IndexScreen() {
       // Add a small delay to ensure the app is properly loaded
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      const apiKey = await AsyncStorage.getItem('openai_api_key');
-      const hasSubscription = await AsyncStorage.getItem('has_subscription');
+      // Check if user has any API keys configured
+      let hasAnyApiKey = false;
+      for (const provider of AI_PROVIDERS) {
+        const key = await AsyncStorage.getItem(`${provider.id}_api_key`);
+        if (key) {
+          hasAnyApiKey = true;
+          break;
+        }
+      }
       
-      if (apiKey || hasSubscription) {
+      if (hasAnyApiKey) {
         // User has completed setup, go to main app
         router.replace('/chat');
       } else {
