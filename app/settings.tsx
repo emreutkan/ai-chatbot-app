@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, TouchableOpacity, Alert } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, Alert, Share } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
@@ -10,15 +10,18 @@ import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
 import { AI_PROVIDERS } from '@/constants/AIProviders';
+import { ConversationService, Conversation } from '@/services/ConversationService';
 
 export default function SettingsScreen() {
   const [hasAnyApiKey, setHasAnyApiKey] = useState(false);
   const [apiKeyCount, setApiKeyCount] = useState(0);
+  const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
   useEffect(() => {
     checkSetupStatus();
+    loadCurrentConversation();
   }, []);
 
   const checkSetupStatus = async () => {
@@ -35,12 +38,99 @@ export default function SettingsScreen() {
     }
   };
 
+  const loadCurrentConversation = async () => {
+    try {
+      const currentConvId = await ConversationService.getCurrentConversationId();
+      if (currentConvId) {
+        const conversations = await ConversationService.getConversations();
+        const conversation = conversations.find(c => c.id === currentConvId);
+        setCurrentConversation(conversation || null);
+      }
+    } catch (error) {
+      console.error('Error loading current conversation:', error);
+    }
+  };
+
   const handleApiKeyManagement = () => {
     router.push('/ai-providers');
   };
 
   const handleSubscriptionManagement = () => {
     router.push('/subscription');
+  };
+
+  const handleExportAllChats = async () => {
+    try {
+      const allConversations = await ConversationService.getConversations();
+      
+      if (allConversations.length === 0) {
+        Alert.alert('No Chats', 'There are no conversations to export.');
+        return;
+      }
+
+      // Create a comprehensive export of all conversations
+      const exportText = allConversations.map((conversation, index) => {
+        const conversationText = ConversationService.exportConversationAsText(conversation);
+        return `\n${'='.repeat(60)}\nCONVERSATION ${index + 1} OF ${allConversations.length}\n${'='.repeat(60)}\n${conversationText}`;
+      }).join('\n\n');
+
+      const header = `ChatMobile - Complete Export\nTotal Conversations: ${allConversations.length}\nExported: ${new Date().toLocaleString()}\n${'='.repeat(60)}\n`;
+      
+      Share.share({
+        message: header + exportText,
+        title: `ChatMobile Export - ${allConversations.length} Conversations`,
+      });
+    } catch (error) {
+      console.error('Error exporting all chats:', error);
+      Alert.alert('Error', 'Failed to export conversations');
+    }
+  };
+
+  const handleClearAllChats = () => {
+    Alert.alert(
+      'Clear All Chats',
+      'Are you sure you want to delete ALL conversations? This will permanently remove all chat history and cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Get all conversations and delete them one by one
+              const allConversations = await ConversationService.getConversations();
+              
+              for (const conversation of allConversations) {
+                await ConversationService.deleteConversation(conversation.id);
+              }
+
+              // Create a fresh new conversation as the current one
+              const newConversation: Conversation = {
+                id: Date.now().toString(),
+                title: 'New Conversation',
+                messages: [],
+                providerId: 'openai', // Default provider
+                modelName: 'gpt-4o', // Default model
+                systemPrompt: '',
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              };
+
+              await ConversationService.setCurrentConversationId(newConversation.id);
+              await ConversationService.saveConversation(newConversation);
+              setCurrentConversation(newConversation);
+              
+              Alert.alert('Success', 'All conversations have been cleared successfully!', [
+                { text: 'OK', onPress: () => router.push('/chat') }
+              ]);
+            } catch (error) {
+              console.error('Error clearing all chats:', error);
+              Alert.alert('Error', 'Failed to clear all conversations');
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleBack = () => {
@@ -125,6 +215,26 @@ export default function SettingsScreen() {
                 <ThemedText style={styles.settingSubtitle}>Version 1.0.0</ThemedText>
               </View>
             </View>
+          </View>
+
+          <View style={styles.section}>
+            <ThemedText style={styles.sectionTitle}>Chat Management</ThemedText>
+            
+            <SettingItem
+              icon="document-text"
+              title="Export All Chats"
+              subtitle="Export all conversations"
+              onPress={handleExportAllChats}
+              hasValue={false}
+            />
+            
+            <SettingItem
+              icon="trash"
+              title="Clear All Chats"
+              subtitle="Clear all conversations"
+              onPress={handleClearAllChats}
+              hasValue={false}
+            />
           </View>
         </View>
       </SafeAreaView>

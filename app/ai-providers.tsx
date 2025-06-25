@@ -190,9 +190,20 @@ export default function AIProvidersScreen() {
 
     return (
       <Modal visible={true} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
-            <View style={styles.modalHeader}>
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowModelSelector(null)}
+        >
+          <TouchableOpacity 
+            style={[styles.modalContent, { backgroundColor: colors.card }]}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={[
+              styles.modalHeader, 
+              { borderBottomColor: colorScheme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }
+            ]}>
               <ThemedText style={styles.modalTitle}>Select Model</ThemedText>
               <TouchableOpacity onPress={() => setShowModelSelector(null)}>
                 <Ionicons name="close" size={24} color={colors.text} />
@@ -206,7 +217,13 @@ export default function AIProvidersScreen() {
                   style={[
                     styles.modelOption,
                     { backgroundColor: colors.surface },
-                    currentModel === model.name && { backgroundColor: colors.primary + '20' }
+                    currentModel === model.name && { 
+                      backgroundColor: colorScheme === 'dark' 
+                        ? `${colors.primary}30` 
+                        : `${colors.primary}20`,
+                      borderWidth: 2,
+                      borderColor: colors.primary
+                    }
                   ]}
                   onPress={() => handleSelectModel(showModelSelector!, model.name)}
                 >
@@ -245,8 +262,8 @@ export default function AIProvidersScreen() {
                 <ThemedText style={styles.addModelButtonText}>Add Custom Model</ThemedText>
               </TouchableOpacity>
             </ScrollView>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     );
   };
@@ -256,9 +273,23 @@ export default function AIProvidersScreen() {
 
     return (
       <Modal visible={true} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
-            <View style={styles.modalHeader}>
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setShowAddCustomModel(null);
+            setCustomModelName('');
+          }}
+        >
+          <TouchableOpacity 
+            style={[styles.modalContent, { backgroundColor: colors.card }]}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={[
+              styles.modalHeader, 
+              { borderBottomColor: colorScheme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }
+            ]}>
               <ThemedText style={styles.modalTitle}>Add Custom Model</ThemedText>
               <TouchableOpacity onPress={() => {
                 setShowAddCustomModel(null);
@@ -274,7 +305,8 @@ export default function AIProvidersScreen() {
                 style={[styles.textInput, { 
                   backgroundColor: colors.surface, 
                   color: colors.text,
-                  borderColor: colors.border
+                  borderColor: colors.border,
+                  borderWidth: 2
                 }]}
                 value={customModelName}
                 onChangeText={setCustomModelName}
@@ -302,8 +334,8 @@ export default function AIProvidersScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     );
   };
@@ -662,13 +694,21 @@ const styles = StyleSheet.create({
   // Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     justifyContent: 'flex-end',
   },
   modalContent: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: -2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -676,7 +716,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
   modalTitle: {
     fontSize: 20,

@@ -15,137 +15,7 @@ export interface AIResponse {
 }
 
 export class AIService {
-  static async callOpenAI(provider: AIProvider, apiKey: string, messages: ChatMessage[], model?: string): Promise<AIResponse> {
-    const selectedModel = model || await getSelectedModel(provider.id);
-    const response = await fetch(provider.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: messages,
-        max_tokens: 1000,
-        temperature: 0.7,
-        top_p: 1,
-        frequency_penalty: 0,
-        presence_penalty: 0,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(this.getOpenAIError(response.status, errorData));
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content.trim(),
-      usage: data.usage,
-    };
-  }
-
-  static async callAnthropic(provider: AIProvider, apiKey: string, messages: ChatMessage[], model?: string): Promise<AIResponse> {
-    // Convert messages format for Claude
-    const systemMessage = messages.find(m => m.role === 'system');
-    const conversationMessages = messages.filter(m => m.role !== 'system');
-    const selectedModel = model || await getSelectedModel(provider.id);
-
-    const response = await fetch(provider.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: selectedModel,
-        max_tokens: 1000,
-        system: systemMessage?.content || "You are a helpful AI assistant.",
-        messages: conversationMessages,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(this.getAnthropicError(response.status, errorData));
-    }
-
-    const data = await response.json();
-    return {
-      content: data.content[0].text,
-      usage: data.usage,
-    };
-  }
-
-  static async callGoogle(provider: AIProvider, apiKey: string, messages: ChatMessage[], model?: string): Promise<AIResponse> {
-    // Convert messages to Gemini format
-    const parts = messages.map(msg => ({
-      text: `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
-    }));
-
-    const selectedModel = model || await getSelectedModel(provider.id);
-    const apiUrl = `${provider.apiUrl}/${selectedModel}:generateContent`;
-
-    const response = await fetch(`${apiUrl}?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: parts
-        }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 1000,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(this.getGoogleError(response.status, errorData));
-    }
-
-    const data = await response.json();
-    return {
-      content: data.candidates[0].content.parts[0].text,
-      usage: data.usageMetadata,
-    };
-  }
-
-  static async callGroq(provider: AIProvider, apiKey: string, messages: ChatMessage[], model?: string): Promise<AIResponse> {
-    // Groq uses OpenAI-compatible format
-    const selectedModel = model || await getSelectedModel(provider.id);
-    const response = await fetch(provider.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: messages,
-        max_tokens: 1000,
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(this.getGroqError(response.status, errorData));
-    }
-
-    const data = await response.json();
-    return {
-      content: data.choices[0].message.content.trim(),
-      usage: data.usage,
-    };
-  }
-
-  static async callAI(provider: AIProvider, apiKey: string, messages: ChatMessage[], model?: string): Promise<AIResponse> {
+  static async callAI(provider: AIProvider, apiKey: string, conversation: ChatMessage[], selectedModel?: string) {
     console.log(`Making ${provider.name} API request...`);
     
     try {
@@ -153,19 +23,19 @@ export class AIService {
       
       switch (provider.id) {
         case 'openai':
-          result = await this.callOpenAI(provider, apiKey, messages, model);
+          result = await this.callOpenAI(apiKey, conversation, selectedModel || provider.defaultModel);
           break;
         case 'anthropic':
-          result = await this.callAnthropic(provider, apiKey, messages, model);
+          result = await this.callAnthropic(apiKey, conversation, selectedModel || provider.defaultModel);
           break;
         case 'google':
-          result = await this.callGoogle(provider, apiKey, messages, model);
+          result = await this.callGoogle(apiKey, conversation, selectedModel || provider.defaultModel);
           break;
         case 'groq':
-          result = await this.callGroq(provider, apiKey, messages, model);
+          result = await this.callGroq(apiKey, conversation, selectedModel || provider.defaultModel);
           break;
         default:
-          throw new Error(`Unsupported AI provider: ${provider.id}`);
+          throw new Error('Provider not supported');
       }
 
       console.log(`${provider.name} API response received:`, {
@@ -180,53 +50,147 @@ export class AIService {
     }
   }
 
-  private static getOpenAIError(status: number, errorData: any): string {
-    if (status === 401) {
-      return 'Invalid OpenAI API key. Please check your API key in Settings.';
-    } else if (status === 429) {
-      return 'OpenAI rate limit exceeded. Please try again in a moment.';
-    } else if (status === 403) {
-      return 'OpenAI API key does not have access to GPT models. Please check your account billing.';
-    } else if (status >= 500) {
-      return 'OpenAI servers are experiencing issues. Please try again later.';
-    } else {
-      return `OpenAI API error: ${status} - ${errorData?.error?.message || 'Unknown error'}`;
+  private static async callOpenAI(apiKey: string, conversation: ChatMessage[], model: string) {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: conversation,
+        max_tokens: 1000,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'OpenAI API request failed');
     }
+
+    const data = await response.json();
+    return { 
+      content: data.choices[0].message.content,
+      usage: data.usage
+    };
   }
 
-  private static getAnthropicError(status: number, errorData: any): string {
-    if (status === 401) {
-      return 'Invalid Anthropic API key. Please check your API key in Settings.';
-    } else if (status === 429) {
-      return 'Anthropic rate limit exceeded. Please try again in a moment.';
-    } else if (status >= 500) {
-      return 'Anthropic servers are experiencing issues. Please try again later.';
-    } else {
-      return `Anthropic API error: ${status} - ${errorData?.error?.message || 'Unknown error'}`;
+  private static async callAnthropic(apiKey: string, conversation: ChatMessage[], model: string) {
+    // Separate system messages from conversation for Anthropic
+    const systemMessages = conversation.filter(msg => msg.role === 'system');
+    const conversationMessages = conversation.filter(msg => msg.role !== 'system');
+    
+    // Combine system messages into one system prompt
+    const systemPrompt = systemMessages.map(msg => msg.content).join('\n\n');
+
+    const requestBody: any = {
+      model: model,
+      max_tokens: 1000,
+      messages: conversationMessages,
+    };
+
+    // Add system prompt if available
+    if (systemPrompt) {
+      requestBody.system = systemPrompt;
     }
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Anthropic API request failed');
+    }
+
+    const data = await response.json();
+    return { 
+      content: data.content[0].text,
+      usage: data.usage
+    };
   }
 
-  private static getGoogleError(status: number, errorData: any): string {
-    if (status === 401 || status === 403) {
-      return 'Invalid Google API key. Please check your API key in Settings.';
-    } else if (status === 429) {
-      return 'Google API rate limit exceeded. Please try again in a moment.';
-    } else if (status >= 500) {
-      return 'Google servers are experiencing issues. Please try again later.';
-    } else {
-      return `Google API error: ${status} - ${errorData?.error?.message || 'Unknown error'}`;
+  private static async callGoogle(apiKey: string, conversation: ChatMessage[], model: string) {
+    // Convert conversation to Google format, handling system prompts
+    const parts: any[] = [];
+    
+    conversation.forEach(message => {
+      if (message.role === 'system') {
+        // For Google, we can prepend system prompts as user messages with special formatting
+        parts.push({
+          role: 'user',
+          parts: [{ text: `[SYSTEM]: ${message.content}` }]
+        });
+        parts.push({
+          role: 'model',
+          parts: [{ text: 'I understand and will follow these instructions.' }]
+        });
+      } else {
+        parts.push({
+          role: message.role === 'user' ? 'user' : 'model',
+          parts: [{ text: message.content }]
+        });
+      }
+    });
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: parts,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 1000,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Google API request failed');
     }
+
+    const data = await response.json();
+    return { 
+      content: data.candidates[0].content.parts[0].text,
+      usage: data.usage
+    };
   }
 
-  private static getGroqError(status: number, errorData: any): string {
-    if (status === 401) {
-      return 'Invalid Groq API key. Please check your API key in Settings.';
-    } else if (status === 429) {
-      return 'Groq rate limit exceeded. Please try again in a moment.';
-    } else if (status >= 500) {
-      return 'Groq servers are experiencing issues. Please try again later.';
-    } else {
-      return `Groq API error: ${status} - ${errorData?.error?.message || 'Unknown error'}`;
+  private static async callGroq(apiKey: string, conversation: ChatMessage[], model: string) {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: conversation,
+        max_tokens: 1000,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Groq API request failed');
     }
+
+    const data = await response.json();
+    return { 
+      content: data.choices[0].message.content,
+      usage: data.usage
+    };
   }
 } 
