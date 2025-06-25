@@ -22,7 +22,7 @@ export default function IndexScreen() {
       
       if (apiKey || hasSubscription) {
         // User has completed setup, go to main app
-        router.replace('/(tabs)');
+        router.replace('/chat');
       } else {
         // User needs to complete setup
         router.replace('/setup');

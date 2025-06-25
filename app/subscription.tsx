@@ -9,8 +9,21 @@ import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 
+// Mock payment service - In a real app, you would integrate with Apple's StoreKit or Google Play Billing
+const simulatePaymentProcess = async (planId: string): Promise<boolean> => {
+  return new Promise((resolve) => {
+    // Simulate payment processing delay
+    setTimeout(() => {
+      // For demo purposes, we'll always succeed
+      // In a real app, this would handle actual payment processing
+      resolve(true);
+    }, 2000);
+  });
+};
+
 export default function SubscriptionScreen() {
   const [selectedPlan, setSelectedPlan] = useState('monthly');
+  const [isProcessing, setIsProcessing] = useState(false);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -33,18 +46,61 @@ export default function SubscriptionScreen() {
   ];
 
   const handleSubscribe = async () => {
+    if (isProcessing) return;
+    
+    setIsProcessing(true);
+    
     try {
-      // In a real app, you would process the payment here
-      await AsyncStorage.setItem('has_subscription', 'true');
+      // Show payment confirmation dialog
       Alert.alert(
-        'Success!',
-        'Welcome to ChatMobile Premium! You now have unlimited access.',
+        'Confirm Purchase',
+        `Subscribe to ${selectedPlan === 'monthly' ? 'Monthly' : 'Yearly'} plan?`,
         [
-          { text: 'Start Chatting', onPress: () => router.replace('/(tabs)') }
-        ]
+          { 
+            text: 'Cancel', 
+            style: 'cancel',
+            onPress: () => setIsProcessing(false)
+          },
+          { 
+            text: 'Subscribe', 
+            onPress: async () => {
+              try {
+                // Process the payment
+                const paymentSuccess = await simulatePaymentProcess(selectedPlan);
+                
+                if (paymentSuccess) {
+                  // Store subscription info
+                  await AsyncStorage.setItem('has_subscription', 'true');
+                  await AsyncStorage.setItem('subscription_plan', selectedPlan);
+                  await AsyncStorage.setItem('subscription_date', new Date().toISOString());
+                  
+                  Alert.alert(
+                    'Success!',
+                    'Welcome to ChatMobile Premium! You now have unlimited access to AI conversations.',
+                    [
+                      { text: 'Start Chatting', onPress: () => router.replace('/chat') }
+                    ]
+                  );
+                } else {
+                  throw new Error('Payment was declined');
+                }
+              } catch (error) {
+                console.error('Payment error:', error);
+                Alert.alert(
+                  'Payment Failed', 
+                  'Unable to process your payment. Please try again or contact support.',
+                  [{ text: 'OK', onPress: () => setIsProcessing(false) }]
+                );
+              }
+            }
+          }
+        ],
+        { onDismiss: () => setIsProcessing(false) }
       );
     } catch (error) {
-      Alert.alert('Error', 'Failed to process subscription. Please try again.');
+      console.error('Subscription error:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+      setIsProcessing(false);
     }
   };
 
@@ -109,11 +165,18 @@ export default function SubscriptionScreen() {
         </View>
 
         <TouchableOpacity 
-          style={[styles.subscribeButton, { backgroundColor: colors.primary }]} 
+          style={[
+            styles.subscribeButton, 
+            { backgroundColor: isProcessing ? colors.border : colors.primary }
+          ]} 
           onPress={handleSubscribe}
+          disabled={isProcessing}
         >
-          <ThemedText style={styles.subscribeButtonText}>
-            Subscribe Now
+          <ThemedText style={[
+            styles.subscribeButtonText,
+            isProcessing && { color: colors.icon }
+          ]}>
+            {isProcessing ? 'Processing...' : 'Subscribe Now'}
           </ThemedText>
         </TouchableOpacity>
 

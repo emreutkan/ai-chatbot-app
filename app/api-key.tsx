@@ -41,10 +41,10 @@ export default function ApiKeyScreen() {
         'Success!', 
         'Your API key has been saved securely. You can now start chatting!',
         [
-          { text: 'Start Chatting', onPress: () => router.replace('/(tabs)') }
+          { text: 'Start Chatting', onPress: () => router.replace('/chat') }
         ]
       );
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to save API key. Please try again.');
     } finally {
       setIsLoading(false);
