@@ -52,12 +52,22 @@ export default function AIProvidersScreen() {
         }
 
         // Load selected model
-        const selectedModel = await getSelectedModel(provider.id);
-        selectedModelMap[provider.id] = selectedModel;
+        try {
+          const selectedModel = await getSelectedModel(provider.id);
+          selectedModelMap[provider.id] = selectedModel;
+        } catch (error) {
+          console.error(`Error getting selected model for ${provider.id}:`, error);
+          selectedModelMap[provider.id] = provider.defaultModel;
+        }
 
         // Load available models (including custom ones)
-        const availableModels = await getAvailableModelsForProvider(provider.id);
-        allModels[provider.id] = availableModels;
+        try {
+          const availableModels = await getAvailableModelsForProvider(provider.id);
+          allModels[provider.id] = availableModels;
+        } catch (error) {
+          console.error(`Error getting available models for ${provider.id}:`, error);
+          allModels[provider.id] = provider.availableModels;
+        }
       }
 
       setApiKeys(keys);
@@ -127,7 +137,7 @@ export default function AIProvidersScreen() {
       await setSelectedModel(providerId, modelName);
       setSelectedModels(prev => ({ ...prev, [providerId]: modelName }));
       setShowModelSelector(null);
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to select model');
     }
   };
@@ -166,7 +176,7 @@ export default function AIProvidersScreen() {
               // Reload models
               const models = await getAvailableModelsForProvider(providerId);
               setAvailableModels(prev => ({ ...prev, [providerId]: models }));
-            } catch (error) {
+            } catch {
               Alert.alert('Error', 'Failed to remove custom model');
             }
           }

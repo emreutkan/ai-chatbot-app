@@ -1,22 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { StyleSheet, View, ScrollView, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Modal, Share, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
-import { AI_PROVIDERS, AIProvider, getProviderById, getSelectedModel, setSelectedModel } from '@/constants/AIProviders';
+import { AI_PROVIDERS, getProviderById, getSelectedModel, setSelectedModel } from '@/constants/AIProviders';
 import { AIService, ChatMessage } from '@/services/AIService';
 import { 
   ConversationService, 
   Conversation, 
   StoredMessage, 
-  SystemPrompt,
-  MODEL_CONTEXT_LIMITS 
+  SystemPrompt
 } from '@/services/ConversationService';
 
 type Message = {
@@ -43,7 +43,6 @@ export default function ChatScreen() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [systemPrompts, setSystemPrompts] = useState<SystemPrompt[]>([]);
   const [currentSystemPrompt, setCurrentSystemPrompt] = useState<string>('');
-  const [showConversationList, setShowConversationList] = useState(false);
   const [showSystemPromptSelector, setShowSystemPromptSelector] = useState(false);
   const [showContextInfo, setShowContextInfo] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
@@ -53,6 +52,65 @@ export default function ChatScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
+  // Forward declare functions
+  const loadUserSettings = async () => {
+    try {
+      // Load all API keys
+      const keys: Record<string, string> = {};
+      for (const provider of AI_PROVIDERS) {
+        const key = await AsyncStorage.getItem(`${provider.id}_api_key`);
+        console.log(`Loading ${provider.id} API key:`, key ? 'Found' : 'Not found');
+        if (key) {
+          keys[provider.id] = key;
+        }
+      }
+      setApiKeys(keys);
+      console.log('Final loaded API keys:', Object.keys(keys));
+
+      // Load selected provider preference
+      const savedProvider = await AsyncStorage.getItem('selected_provider');
+      console.log('Saved provider preference:', savedProvider);
+      if (savedProvider && getProviderById(savedProvider)) {
+        setSelectedProvider(savedProvider);
+        // Load current model for this provider
+        try {
+          const model = await getSelectedModel(savedProvider);
+          setCurrentModel(model);
+        } catch (error) {
+          console.error('Error loading model for provider:', error);
+          const provider = getProviderById(savedProvider);
+          setCurrentModel(provider?.defaultModel || 'gpt-4o');
+        }
+      }
+    } catch (error) {
+      console.error('Error loading user settings:', error);
+    }
+  };
+
+  const initializeApp = async () => {
+    await loadUserSettings();
+    await loadConversations();
+    await loadSystemPrompts();
+    await loadOrCreateCurrentConversation();
+    
+    // Retry loading system prompts if they failed to load initially
+    setTimeout(async () => {
+      if (!systemPrompts || systemPrompts.length === 0) {
+        console.log('Retrying system prompts load...');
+        await loadSystemPrompts();
+      }
+    }, 2000);
+  };
+
+  const loadSystemPrompt = useCallback(async () => {
+    try {
+      const prompt = await ConversationService.getSelectedSystemPrompt(selectedProvider, currentModel);
+      setCurrentSystemPrompt(prompt);
+    } catch (error) {
+      console.error('Error loading system prompt:', error);
+    }
+  }, [selectedProvider, currentModel]);
+
   useEffect(() => {
     initializeApp();
   }, []);
@@ -61,7 +119,7 @@ export default function ChatScreen() {
     if (selectedProvider && currentModel) {
       loadSystemPrompt();
     }
-  }, [selectedProvider, currentModel]);
+  }, [selectedProvider, currentModel, loadSystemPrompt]);
 
   // Animate sidebar
   useEffect(() => {
@@ -78,7 +136,7 @@ export default function ChatScreen() {
         useNativeDriver: true,
       }).start();
     }
-  }, [showSidebar]);
+  }, [showSidebar, sidebarAnimation]);
 
   // Auto-save chat when user starts typing
   useEffect(() => {
@@ -105,14 +163,7 @@ export default function ChatScreen() {
     handleClearFromSettings();
   }, []);
 
-  const initializeApp = async () => {
-    await loadUserSettings();
-    await loadConversations();
-    await loadSystemPrompts();
-    await loadOrCreateCurrentConversation();
-  };
-
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
     try {
       const loadedConversations = await ConversationService.getConversations();
       console.log('Loaded conversations:', loadedConversations.map(conv => ({
@@ -126,27 +177,29 @@ export default function ChatScreen() {
     } catch (error) {
       console.error('Error loading conversations:', error);
     }
-  };
+  }, []);
 
-  const loadSystemPrompts = async () => {
+  const loadSystemPrompts = useCallback(async () => {
     try {
       const prompts = await ConversationService.getSystemPrompts();
+      console.log('Loaded system prompts:', prompts.length, prompts.map(p => p.name));
       setSystemPrompts(prompts);
     } catch (error) {
       console.error('Error loading system prompts:', error);
+      // Fallback to default prompts to prevent crashes
+      const defaultPrompts = [
+        {
+          id: 'default',
+          name: 'Default Assistant',
+          prompt: 'You are a helpful AI assistant. Be concise, accurate, and friendly in your responses.',
+          isDefault: true,
+        }
+      ];
+      setSystemPrompts(defaultPrompts);
     }
-  };
+  }, []);
 
-  const loadSystemPrompt = async () => {
-    try {
-      const prompt = await ConversationService.getSelectedSystemPrompt(selectedProvider, currentModel);
-      setCurrentSystemPrompt(prompt);
-    } catch (error) {
-      console.error('Error loading system prompt:', error);
-    }
-  };
-
-  const loadOrCreateCurrentConversation = async () => {
+  const loadOrCreateCurrentConversation = useCallback(async () => {
     try {
       const currentConvId = await ConversationService.getCurrentConversationId();
       if (currentConvId) {
@@ -160,6 +213,22 @@ export default function ChatScreen() {
             isUser: msg.isUser,
             timestamp: msg.timestamp,
           })));
+          
+          // Load the system prompt for this conversation's provider/model
+          if (conversation.systemPrompt) {
+            setCurrentSystemPrompt(conversation.systemPrompt);
+            console.log('Loaded existing system prompt from conversation:', conversation.systemPrompt.substring(0, 100) + '...');
+          } else {
+            // If conversation doesn't have a system prompt, load the default for this provider/model
+            try {
+              const prompt = await ConversationService.getSelectedSystemPrompt(conversation.providerId, conversation.modelName);
+              setCurrentSystemPrompt(prompt);
+              console.log('Loaded default system prompt for conversation:', prompt.substring(0, 100) + '...');
+            } catch (error) {
+              console.error('Error loading system prompt for conversation:', error);
+            }
+          }
+          
           return;
         }
       }
@@ -170,20 +239,39 @@ export default function ChatScreen() {
       console.error('Error loading current conversation:', error);
       await createNewConversation();
     }
-  };
+  }, []);
 
   const createNewConversation = async () => {
     try {
       const provider = getProviderById(selectedProvider);
-      const model = await getSelectedModel(selectedProvider);
+      let model: string;
+      try {
+        model = await getSelectedModel(selectedProvider);
+      } catch (error) {
+        console.error('Error getting selected model for new conversation:', error);
+        model = provider?.defaultModel || 'gpt-4o';
+      }
       
+      // Ensure we have a current system prompt
+      let systemPromptToUse = currentSystemPrompt;
+      if (!systemPromptToUse) {
+        try {
+          systemPromptToUse = await ConversationService.getSelectedSystemPrompt(selectedProvider, model);
+          setCurrentSystemPrompt(systemPromptToUse);
+          console.log('Loaded system prompt for new conversation:', systemPromptToUse.substring(0, 100) + '...');
+        } catch (error) {
+          console.error('Error loading system prompt for new conversation:', error);
+          systemPromptToUse = '';
+        }
+      }
+
       const newConversation: Conversation = {
         id: Date.now().toString(),
         title: 'New Conversation',
         messages: [],
         providerId: selectedProvider,
         modelName: model,
-        systemPrompt: currentSystemPrompt,
+        systemPrompt: systemPromptToUse,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -220,7 +308,10 @@ export default function ChatScreen() {
   };
 
   const saveMessageToConversation = async (message: Message) => {
-    if (!currentConversation) return;
+    if (!currentConversation) {
+      console.warn('No current conversation to save message to');
+      return;
+    }
 
     try {
       const storedMessage: StoredMessage = {
@@ -230,12 +321,12 @@ export default function ChatScreen() {
 
       const updatedConversation: Conversation = {
         ...currentConversation,
-        messages: [...currentConversation.messages, storedMessage],
+        messages: [...(currentConversation.messages || []), storedMessage],
         updatedAt: new Date(),
       };
 
       // Update title if this is the first user message
-      if (message.isUser && currentConversation.messages.length <= 1) {
+      if (message.isUser && (currentConversation.messages?.length || 0) <= 1) {
         updatedConversation.title = ConversationService.generateConversationTitle(message.text);
       }
 
@@ -252,36 +343,11 @@ export default function ChatScreen() {
       await loadConversations();
     } catch (error) {
       console.error('Error saving message:', error);
+      Alert.alert('Error', 'Failed to save message to conversation');
     }
   };
 
-  const loadUserSettings = async () => {
-    try {
-      // Load all API keys
-      const keys: Record<string, string> = {};
-      for (const provider of AI_PROVIDERS) {
-        const key = await AsyncStorage.getItem(`${provider.id}_api_key`);
-        console.log(`Loading ${provider.id} API key:`, key ? 'Found' : 'Not found');
-        if (key) {
-          keys[provider.id] = key;
-        }
-      }
-      setApiKeys(keys);
-      console.log('Final loaded API keys:', Object.keys(keys));
 
-      // Load selected provider preference
-      const savedProvider = await AsyncStorage.getItem('selected_provider');
-      console.log('Saved provider preference:', savedProvider);
-      if (savedProvider && getProviderById(savedProvider)) {
-        setSelectedProvider(savedProvider);
-        // Load current model for this provider
-        const model = await getSelectedModel(savedProvider);
-        setCurrentModel(model);
-      }
-    } catch (error) {
-      console.error('Error loading user settings:', error);
-    }
-  };
 
   const sendMessage = async () => {
     if (!inputText.trim() || !currentConversation) return;
@@ -354,6 +420,12 @@ export default function ChatScreen() {
           role: 'system',
           content: currentSystemPrompt
         });
+        console.log('Adding system prompt to conversation:', {
+          promptLength: currentSystemPrompt.length,
+          promptPreview: currentSystemPrompt.substring(0, 100) + '...'
+        });
+      } else {
+        console.log('No system prompt available for this conversation');
       }
 
       // Add trimmed messages
@@ -365,7 +437,13 @@ export default function ChatScreen() {
       });
 
       // Get the selected model for this provider
-      const selectedModel = await getSelectedModel(selectedProvider);
+      let selectedModel: string;
+      try {
+        selectedModel = await getSelectedModel(selectedProvider);
+      } catch (error) {
+        console.error('Error getting selected model, using default:', error);
+        selectedModel = currentProvider.defaultModel;
+      }
 
       console.log(`Sending to ${currentProvider.name}:`, {
         messageCount: conversationHistory.length,
@@ -429,6 +507,26 @@ export default function ChatScreen() {
         isUser: msg.isUser,
         timestamp: msg.timestamp,
       })));
+      
+      // Update provider and model to match the conversation
+      setSelectedProvider(conversation.providerId);
+      setCurrentModel(conversation.modelName);
+      
+      // Load the system prompt for this conversation
+      if (conversation.systemPrompt) {
+        setCurrentSystemPrompt(conversation.systemPrompt);
+        console.log('Switched to conversation with existing system prompt:', conversation.systemPrompt.substring(0, 100) + '...');
+      } else {
+        // If conversation doesn't have a system prompt, load the default for this provider/model
+        try {
+          const prompt = await ConversationService.getSelectedSystemPrompt(conversation.providerId, conversation.modelName);
+          setCurrentSystemPrompt(prompt);
+          console.log('Loaded default system prompt for switched conversation:', prompt.substring(0, 100) + '...');
+        } catch (error) {
+          console.error('Error loading system prompt for switched conversation:', error);
+        }
+      }
+      
       await ConversationService.setCurrentConversationId(conversation.id);
       setShowSidebar(false);
     } catch (error) {
@@ -466,23 +564,40 @@ export default function ChatScreen() {
 
   const selectSystemPrompt = async (promptId: string) => {
     try {
+      // First save the selected prompt preference
       await ConversationService.setSelectedSystemPrompt(selectedProvider, currentModel, promptId);
-      await loadSystemPrompt();
+      
+      // Get the actual prompt text from the selected prompt
+      const prompts = await ConversationService.getSystemPrompts();
+      const selectedPrompt = prompts.find(p => p.id === promptId);
+      const newSystemPrompt = selectedPrompt?.prompt || '';
+      
+      // Update the current system prompt state
+      setCurrentSystemPrompt(newSystemPrompt);
+      
       setShowSystemPromptSelector(false);
       setShowSidebar(false);
       
-      // Update current conversation's system prompt
+      // Update current conversation's system prompt with the new value
       if (currentConversation) {
         const updatedConversation = {
           ...currentConversation,
-          systemPrompt: currentSystemPrompt,
+          systemPrompt: newSystemPrompt,
           updatedAt: new Date(),
         };
         setCurrentConversation(updatedConversation);
         await ConversationService.saveConversation(updatedConversation);
+        
+        console.log('Updated conversation system prompt:', {
+          promptId,
+          promptName: selectedPrompt?.name,
+          promptText: newSystemPrompt.substring(0, 100) + '...',
+          conversationId: currentConversation.id
+        });
       }
     } catch (error) {
       console.error('Error selecting system prompt:', error);
+      Alert.alert('Error', 'Failed to update system prompt');
     }
   };
 
@@ -496,23 +611,93 @@ export default function ChatScreen() {
           text: 'Clear',
           style: 'destructive',
           onPress: async () => {
-            await createNewConversation();
-            setShowSidebar(false);
+            try {
+              await createNewConversation();
+              setShowSidebar(false);
+            } catch (error) {
+              console.error('Error clearing conversation:', error);
+              Alert.alert('Error', 'Failed to clear conversation');
+            }
           }
         }
       ]
     );
   };
 
-  const exportConversation = () => {
-    if (!currentConversation) return;
+  const exportConversation = async (conversation?: Conversation) => {
+    const convToExport = conversation || currentConversation;
+    if (!convToExport) return;
 
-    const exportText = ConversationService.exportConversationAsText(currentConversation);
-    Share.share({
-      message: exportText,
-      title: currentConversation.title,
-    });
-    setShowSidebar(false);
+    try {
+      const exportText = ConversationService.exportConversationAsText(convToExport);
+      await Share.share({
+        message: exportText,
+        title: convToExport.title,
+      });
+      setShowSidebar(false);
+    } catch (error) {
+      console.error('Error exporting conversation:', error);
+      Alert.alert('Error', 'Failed to export conversation');
+    }
+  };
+
+  const clearSpecificConversation = (conversation: Conversation) => {
+    if (conversation.id === currentConversation?.id) {
+      // If clearing current conversation, show a confirmation and clear it
+      Alert.alert(
+        'Clear Current Conversation',
+        'This will clear the conversation you are currently viewing. Are you sure?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Clear',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await createNewConversation();
+                setShowSidebar(false);
+              } catch (error) {
+                console.error('Error clearing conversation:', error);
+                Alert.alert('Error', 'Failed to clear conversation');
+              }
+            }
+          }
+        ]
+      );
+    } else {
+      // If clearing a different conversation, just delete it
+      deleteConversation(conversation.id);
+    }
+  };
+
+  const renderSwipeActions = (conversation: Conversation, side: 'left' | 'right') => {
+    if (side === 'left') {
+      // Left swipe shows export action
+      return (
+        <View style={styles.swipeActionContainer}>
+          <TouchableOpacity
+            style={[styles.swipeAction, styles.exportAction, { backgroundColor: colors.primary }]}
+            onPress={() => exportConversation(conversation)}
+          >
+            <Ionicons name="share" size={20} color="white" />
+            <ThemedText style={styles.swipeActionText}>Export</ThemedText>
+          </TouchableOpacity>
+        </View>
+      );
+    } else {
+      // Right swipe shows clear action
+      return (
+        <View style={styles.swipeActionContainer}>
+          <TouchableOpacity
+            style={[styles.swipeAction, styles.clearAction, { backgroundColor: colors.error }]}
+            onPress={() => clearSpecificConversation(conversation)}
+          >
+            <Ionicons name="trash" size={20} color="white" />
+            <ThemedText style={styles.swipeActionText}>Clear</ThemedText>
+          </TouchableOpacity>
+        </View>
+      );
+    }
   };
 
   const getContextInfo = () => {
@@ -563,6 +748,38 @@ export default function ChatScreen() {
   );
 
   const renderSystemPromptSelector = () => {
+    // Defensive programming to prevent crashes
+    if (!systemPrompts || !Array.isArray(systemPrompts) || systemPrompts.length === 0) {
+      return (
+        <Modal visible={showSystemPromptSelector} transparent animationType="slide">
+          <TouchableOpacity 
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowSystemPromptSelector(false)}
+          >
+            <TouchableOpacity 
+              style={[styles.modalContent, { backgroundColor: colors.card }]}
+              activeOpacity={1}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={[styles.modalHeader, { borderBottomColor: colorScheme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }]}>
+                <ThemedText style={styles.modalTitle}>System Prompts</ThemedText>
+                <TouchableOpacity onPress={() => setShowSystemPromptSelector(false)}>
+                  <Ionicons name="close" size={24} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.modalBody}>
+                <ThemedText style={styles.contextInfoValue}>
+                  Loading system prompts...
+                </ThemedText>
+              </View>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      );
+    }
+
     const currentPrompt = systemPrompts.find(p => p.prompt === currentSystemPrompt);
 
     return (
@@ -578,7 +795,12 @@ export default function ChatScreen() {
             onPress={(e) => e.stopPropagation()}
           >
             <View style={[styles.modalHeader, { borderBottomColor: colorScheme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)' }]}>
-              <ThemedText style={styles.modalTitle}>System Prompts</ThemedText>
+              <View style={{ flex: 1 }}>
+                <ThemedText style={styles.modalTitle}>System Prompts</ThemedText>
+                <ThemedText style={[styles.contextInfoValue, { fontSize: 12, marginTop: 4, opacity: 0.7 }]}>
+                  Choose how the AI should respond to you
+                </ThemedText>
+              </View>
               <TouchableOpacity onPress={() => setShowSystemPromptSelector(false)}>
                 <Ionicons name="close" size={24} color={colors.text} />
               </TouchableOpacity>
@@ -841,21 +1063,32 @@ export default function ChatScreen() {
                       }
                     ]}
                     onPress={async () => {
-                      setSelectedProvider(provider.id);
-                      const model = await getSelectedModel(provider.id);
-                      setCurrentModel(model);
-                      await AsyncStorage.setItem('selected_provider', provider.id);
-                      
-                      // Update current conversation's provider and model
-                      if (currentConversation) {
-                        const updatedConversation = {
-                          ...currentConversation,
-                          providerId: provider.id,
-                          modelName: model,
-                          updatedAt: new Date(),
-                        };
-                        setCurrentConversation(updatedConversation);
-                        await ConversationService.saveConversation(updatedConversation);
+                      try {
+                        setSelectedProvider(provider.id);
+                        let model: string;
+                        try {
+                          model = await getSelectedModel(provider.id);
+                        } catch (error) {
+                          console.error('Error getting model for provider switch:', error);
+                          model = provider.defaultModel;
+                        }
+                        setCurrentModel(model);
+                        await AsyncStorage.setItem('selected_provider', provider.id);
+                        
+                        // Update current conversation's provider and model
+                        if (currentConversation) {
+                          const updatedConversation = {
+                            ...currentConversation,
+                            providerId: provider.id,
+                            modelName: model,
+                            updatedAt: new Date(),
+                          };
+                          setCurrentConversation(updatedConversation);
+                          await ConversationService.saveConversation(updatedConversation);
+                        }
+                      } catch (error) {
+                        console.error('Error switching provider:', error);
+                        Alert.alert('Error', 'Failed to switch provider');
                       }
                     }}
                   >
@@ -948,8 +1181,19 @@ export default function ChatScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity 
-                style={[styles.sidebarItem, { backgroundColor: colors.surface }]}
-                onPress={() => setShowSystemPromptSelector(true)}
+                style={[
+                  styles.sidebarItem, 
+                  { backgroundColor: colors.surface },
+                  (!systemPrompts || systemPrompts.length === 0) && { opacity: 0.5 }
+                ]}
+                onPress={() => {
+                  if (systemPrompts && systemPrompts.length > 0) {
+                    setShowSystemPromptSelector(true);
+                  } else {
+                    Alert.alert('Loading', 'System prompts are still loading. Please try again in a moment.');
+                  }
+                }}
+                disabled={!systemPrompts || systemPrompts.length === 0}
               >
                 <Ionicons name="person" size={20} color={colors.primary} />
                 <ThemedText style={styles.sidebarItemText}>System Prompt</ThemedText>
@@ -969,6 +1213,8 @@ export default function ChatScreen() {
               </TouchableOpacity>
             </View>
 
+
+
             {/* Chat History Section */}
             <View style={styles.sidebarSection}>
               <View style={styles.sectionHeaderRow}>
@@ -978,38 +1224,50 @@ export default function ChatScreen() {
                 </TouchableOpacity>
               </View>
               
+              {conversations.length > 0 && (
+                <ThemedText style={styles.swipeHintText}>
+                  💡 Swipe left to export, right to clear
+                </ThemedText>
+              )}
+              
               {conversations.map((conversation) => (
-                <TouchableOpacity
+                <Swipeable
                   key={conversation.id}
-                  style={[
-                    styles.chatHistoryItem,
-                    { backgroundColor: colors.surface },
-                    currentConversation?.id === conversation.id && { 
-                      backgroundColor: colors.primary + '20', 
-                      borderLeftColor: colors.primary, 
-                      borderLeftWidth: 4 
-                    }
-                  ]}
-                  onPress={() => switchToConversation(conversation)}
+                  renderLeftActions={() => renderSwipeActions(conversation, 'left')}
+                  renderRightActions={() => renderSwipeActions(conversation, 'right')}
                 >
-                  <View style={styles.chatHistoryInfo}>
-                    <ThemedText style={styles.chatHistoryTitle} numberOfLines={1}>
-                      {conversation.title}
-                    </ThemedText>
-                    <ThemedText style={styles.chatHistoryMeta}>
-                      {conversation.providerId} • {conversation.modelName}
-                    </ThemedText>
-                    <ThemedText style={styles.chatHistoryDate}>
-                      {conversation.updatedAt.toLocaleDateString()}
-                    </ThemedText>
-                  </View>
                   <TouchableOpacity
-                    style={styles.deleteChatButton}
-                    onPress={() => deleteConversation(conversation.id)}
+                    style={[
+                      styles.chatHistoryItem,
+                      { backgroundColor: colors.surface },
+                      currentConversation?.id === conversation.id && { 
+                        backgroundColor: colors.primary + '20', 
+                        borderLeftColor: colors.primary, 
+                        borderLeftWidth: 4 
+                      }
+                    ]}
+                    onPress={() => switchToConversation(conversation)}
                   >
-                    <Ionicons name="trash" size={16} color={colors.error} />
+                    <View style={styles.chatHistoryInfo}>
+                      <ThemedText style={styles.chatHistoryTitle} numberOfLines={1}>
+                        {conversation.title}
+                      </ThemedText>
+                      <ThemedText style={styles.chatHistoryMeta}>
+                        {conversation.providerId} • {conversation.modelName}
+                      </ThemedText>
+                      <ThemedText style={styles.chatHistoryDate}>
+                        {conversation.updatedAt.toLocaleDateString()}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.swipeIndicator}>
+                      {currentConversation?.id === conversation.id ? (
+                        <Ionicons name="radio-button-on" size={16} color={colors.primary} />
+                      ) : (
+                        <Ionicons name="ellipsis-horizontal" size={16} color={colors.icon} />
+                      )}
+                    </View>
                   </TouchableOpacity>
-                </TouchableOpacity>
+                </Swipeable>
               ))}
             </View>
           </ScrollView>
@@ -1019,12 +1277,13 @@ export default function ChatScreen() {
   );
 
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-        <KeyboardAvoidingView 
-          style={styles.keyboardAvoidingView}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemedView style={styles.container}>
+        <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+          <KeyboardAvoidingView 
+            style={styles.keyboardAvoidingView}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
           <View style={styles.header}>
             <TouchableOpacity onPress={() => setShowSidebar(true)} style={styles.hamburgerButton}>
               <Ionicons name="menu" size={24} color={colors.primary} />
@@ -1133,6 +1392,7 @@ export default function ChatScreen() {
       {renderContextPopup()}
       {renderSidebar()}
     </ThemedView>
+    </GestureHandlerRootView>
   );
 }
 
@@ -1584,5 +1844,41 @@ const styles = StyleSheet.create({
   modelChipText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  swipeActionContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swipeAction: {
+    flex: 1,
+    height: '100%',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  exportAction: {
+    backgroundColor: '#007AFF',
+  },
+  clearAction: {
+    backgroundColor: '#FF3B30',
+  },
+  swipeActionText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  swipeHintText: {
+    fontSize: 11,
+    opacity: 0.6,
+    marginBottom: 8,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  swipeIndicator: {
+    paddingLeft: 8,
   },
 }); 

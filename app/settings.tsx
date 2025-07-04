@@ -15,7 +15,6 @@ import { ConversationService, Conversation } from '@/services/ConversationServic
 export default function SettingsScreen() {
   const [hasAnyApiKey, setHasAnyApiKey] = useState(false);
   const [apiKeyCount, setApiKeyCount] = useState(0);
-  const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -43,8 +42,8 @@ export default function SettingsScreen() {
       const currentConvId = await ConversationService.getCurrentConversationId();
       if (currentConvId) {
         const conversations = await ConversationService.getConversations();
-        const conversation = conversations.find(c => c.id === currentConvId);
-        setCurrentConversation(conversation || null);
+        conversations.find(c => c.id === currentConvId);
+        // Just verify conversation exists, don't need to store it in state
       }
     } catch (error) {
       console.error('Error loading current conversation:', error);
@@ -118,7 +117,6 @@ export default function SettingsScreen() {
 
               await ConversationService.setCurrentConversationId(newConversation.id);
               await ConversationService.saveConversation(newConversation);
-              setCurrentConversation(newConversation);
               
               Alert.alert('Success', 'All conversations have been cleared successfully!', [
                 { text: 'OK', onPress: () => router.push('/chat') }
